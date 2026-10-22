@@ -1,0 +1,96 @@
+name: Extract Royal Wedding Hub and Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install unzip
+        run: sudo apt-get update && sudo apt-get install -y unzip
+
+      - name: Extract original website ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="Royal_Wedding_Hub_Header_Logo_Final.zip"
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "ERROR: Upload $ZIP_FILE to the repository root first."
+            exit 1
+          fi
+          mkdir -p extracted
+          unzip -oq "$ZIP_FILE" -d extracted
+          INDEX_FILE="$(find extracted -type f -name index.html -print -quit)"
+          if [ -z "$INDEX_FILE" ]; then
+            echo "ERROR: index.html was not found inside the ZIP."
+            exit 1
+          fi
+          WEB_DIR="$(dirname "$INDEX_FILE")"
+          mkdir -p www
+          cp -a "$WEB_DIR"/. www/
+          test -s www/index.html
+          echo "Website files extracted and prepared."
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
+
+      - name: Create Capacitor Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm init -y
+          npm install @capacitor/core@7 @capacitor/android@7
+          npm install --save-dev @capacitor/cli@7
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "com.royalweddinghub.app",
+            "appName": "Royal Wedding Hub",
+            "webDir": "www",
+            "bundledWebRuntime": false
+          }
+          JSON
+          npx cap add android
+
+      - name: Sync and build debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx cap sync android
+          cd android
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Royal-Wedding-Hub-APK
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
